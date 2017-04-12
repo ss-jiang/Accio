@@ -2,7 +2,11 @@
 #include <thread>
 #include <iostream>
 
-int main()
+int main(int argc, char* argv[])
 {
-  std::cerr << "client is not implemented yet" << std::endl;
+	if (argc != 3) {
+      	std::cerr << "ERROR: client must be called with exactly three parameters: <HOSTNAME-OR-IP> <PORT> <FILENAME>\n";
+      	exit(-1);
+   	}
+
 }
