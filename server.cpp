@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <unistd.h>
+#include <netdb.h>
 
 #include <string>
 #include <thread>
@@ -34,66 +35,90 @@ int main(int argc, char* argv[])
    	signal(SIGQUIT, signal_handler);
    	signal(SIGTERM, signal_handler);
 	
+	//std::string ip_addr = "127.0.0.1";
    	int PORT_NUM = atoi(argv[1]);
    	//std::cout << PORT_NUM << std::endl;
    	std::string FILE_DIR = argv[2];
    	//std::cout << FILE_DIR <<std::endl;
+   	struct addrinfo hints, *res, *p;
+    int status;
+    char ipstr[INET_ADDRSTRLEN] = {'\0'};
 
    	// Check that the port number is in range
    	if (PORT_NUM < 1024 || PORT_NUM > 65535) {
-	    std::cerr << "ERROR: Port number out of range [1024 - 65535]." << std::endl;
+	    std::cerr << "ERROR: Port number out of range [1024 - 65535]" << std::endl;
 	    exit(1);
 	}
 
 
+	memset(&hints, 0, sizeof hints);
+    hints.ai_flags = AI_PASSIVE; 
+    hints.ai_family = AF_INET; // AF_INET specifies IPv4
+    hints.ai_socktype = SOCK_STREAM;
+
+    // e.g. "www.example.com" or IP; e.g. "http" or port number
+	if ((status = getaddrinfo(NULL, argv[1], &hints, &res)) != 0) {
+        std::cerr << "ERROR: getaddrinfo: " << gai_strerror(status) << std::endl;
+        exit(1);
+    }
 
 	// create a socket using TCP IP
-	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+	int sockfd = socket(res->ai_family, res->ai_socktype, 0);
 	if (sockfd == -1) {
-		std::cerr << "ERROR: Failed to create socket." << std::endl;
+		std::cerr << "ERROR: Failed to create socket" << std::endl;
 		exit(-1);
 	}
-
 
 	// allow others to reuse the address
 	int yes = 1;
 	if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(int)) == -1) {
 		perror("setsockopt");
-		return 1;
+		exit(1);
 	}
 
-	// bind address to socket
-	struct sockaddr_in addr;
-	addr.sin_family = AF_INET;
-	addr.sin_port = htons(PORT_NUM);     // short, network byte order
-	addr.sin_addr.s_addr = inet_addr("127.0.0.1");
-	memset(addr.sin_zero, '\0', sizeof(addr.sin_zero));
-
-	if (bind(sockfd, (struct sockaddr*)&addr, sizeof(addr)) == -1) {
-		std::cerr << "ERROR: Failed to bind to socket." << std::endl;
+	// bind the socket
+	if (bind(sockfd, res->ai_addr, res->ai_addrlen) == -1) {
+		std::cerr << "ERROR: Failed to bind to socket" << std::endl;
 		exit(-1);
 	}
 
 	// set socket to listen status
 	if (listen(sockfd, 1) == -1) {
-		std::cerr << "ERROR: Failed to listen to socket." << std::endl;
+		std::cerr << "ERROR: Failed to listen to socket" << std::endl;
 		exit(-1);
 	}
 
-	// // accept a new connection
-	// struct sockaddr_in clientAddr;
-	// socklen_t clientAddrSize = sizeof(clientAddr);
-	// int clientSockfd = accept(sockfd, (struct sockaddr*)&clientAddr, &clientAddrSize);
+	// accept a new connection
+	struct sockaddr_in clientAddr;
+	socklen_t clientAddrSize = sizeof(clientAddr);
+	int clientSockfd;
 
-	// if (clientSockfd == -1) {
-	// 	perror("accept");
-	// 	return 4;
-	// }
+	while (clientSockfd = accept(sockfd, (struct sockaddr *)&clientAddr, &clientAddrSize)) 
+	{
 
-	// char ipstr[INET_ADDRSTRLEN] = {'\0'};
-	// inet_ntop(clientAddr.sin_family, &clientAddr.sin_addr, ipstr, sizeof(ipstr));
-	// std::cout << "Accept a connection from: " << ipstr << ":" <<
-	// ntohs(clientAddr.sin_port) << std::endl;
+		if (clientSockfd == -1) {
+			std::cerr << "ERROR: Failed to get accept connection" << std::endl;
+			exit(1);
+		}
+
+		//for (p = res; p != NULL; p = p->ai_next) {
+	  //       struct sockaddr_in *ipv4 = (struct sockaddr_in *)p->ai_addr;
+	  //       void* addr = &(ipv4->sin_addr);
+	  //       const char* ipver = "IPv4";
+	  //       unsigned short* port = &(ipv4->sin_port);
+
+	  //       // convert the IP to a string and print it:
+	  //       inet_ntop(p->ai_family, addr, ipstr, sizeof ipstr);
+	  //       printf("  %s: %s\n", ipver, ipstr);
+	  //       std::cout << "Accept a connection from: " << ipstr << ":" <<
+			// ntohs(*port) << std::endl;
+
+		inet_ntop(clientAddr.sin_family, &clientAddr.sin_addr, ipstr, sizeof(ipstr));
+		std::cout << "Accept a connection from: " << ipstr << ":" <<
+		ntohs(clientAddr.sin_port) << std::endl;
+	    //}
+
+	}
 
 	// // read/write data from/into the connection
 	// bool isEnd = false;
