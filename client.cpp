@@ -8,11 +8,19 @@
 #include <unistd.h>
 #include <netdb.h>
 
+#include <stdlib.h>
+#include <fcntl.h>
+#include <sys/sendfile.h>
+#include <sys/stat.h>
+
 #include <string>
 #include <thread>
 #include <iostream>
 #include <signal.h>
 #include <sstream>
+
+
+#define MAX_PATH_LENGTH        4096
 
 int main(int argc, char* argv[])
 {
@@ -21,15 +29,13 @@ int main(int argc, char* argv[])
       	exit(-1);
    	}
 
-	std::string IP_ADDR = argv[1];
-	std::cout << IP_ADDR << std::endl;
-	int PORT_NUM = atoi(argv[2]);
-	//std::cout << PORT_NUM << std::endl;
-	std::string FILE_DIR = argv[3];
-	//std::cout << FILE_DIR << std::endl;
+	std::string ip_addr = argv[1];
+	int port_num = atoi(argv[2]);
+	std::string file_name = argv[3];
+	struct stat stat_buf;
 
 	// Check that the port number is in range
-   	if (PORT_NUM < 1024 || PORT_NUM > 65535) {
+   	if (port_num < 1024 || port_num > 65535) {
 	    std::cerr << "ERROR: Port number out of range [1024 - 65535]" << std::endl;
 	    exit(1);
 	}
@@ -37,15 +43,15 @@ int main(int argc, char* argv[])
    	// create a socket using TCP IP
   	int sockfd = socket(AF_INET, SOCK_STREAM, 0);
 
-  	struct addrinfo hints, *res, *p;
+  	struct addrinfo hints, *res;
     int status;
     char ipstr[INET_ADDRSTRLEN] = {'\0'};
 
-	memset(&hints, 0, sizeof hints);
+	memset(&hints, 0, sizeof(hints));
     hints.ai_flags = AI_PASSIVE; 
     hints.ai_family = AF_INET; // AF_INET specifies IPv4
     hints.ai_socktype = SOCK_STREAM;
-    
+
     // e.g. "www.example.com" or IP; e.g. "http" or port number
 	if ((status = getaddrinfo(argv[1], argv[2], &hints, &res)) != 0) {
         std::cerr << "ERROR: getaddrinfo: " << gai_strerror(status) << std::endl;
@@ -65,59 +71,39 @@ int main(int argc, char* argv[])
 		exit(1);
 	}
 
-	// //for (p = res; p != NULL; p = p->ai_next) {
- //    struct sockaddr_in *ipv4 = (struct sockaddr_in *)res->ai_addr;
- //    void* addr = &(ipv4->sin_addr);
- //    const char* ipver = "IPv4";
- //    unsigned short* port = &(ipv4->sin_port);
-
- //    // convert the IP to a string and print it:
- //    inet_ntop(res->ai_family, addr, ipstr, sizeof ipstr);
- //    printf("  %s: %s\n", ipver, ipstr);
- //    std::cout << "Set up a connection from: " << ipstr << ":" <<
-	// ntohs(*port) << std::endl;
- //    //}
-
   	inet_ntop(clientAddr.sin_family, &clientAddr.sin_addr, ipstr, sizeof(ipstr));
-  	std::cout << "Set up a connection from: " << ipstr << ":" <<
-    ntohs(clientAddr.sin_port) << std::endl;
+  	std::cout << "Set up a connection from: " << ipstr << ":" << ntohs(clientAddr.sin_port) << std::endl;
 
 
+    // FROM: 
+    // http://tldp.org/LDP/LGNET/91/misc/tranter/server.c.txt
 
-	// send/receive data to/from connection
-	bool isEnd = false;
-	std::string input;
-	char buf[20] = {0};
-	std::stringstream ss;
+	/* open the file to be sent */
+    int fd = open(&file_name[0], O_RDONLY);
+    if (fd == -1) {
+		fprintf(stderr, "unable to open '%s': %s\n", &file_name[0], strerror(errno));
+		exit(1);
+    }
 
-	while (!isEnd) {
-		memset(buf, '\0', sizeof(buf));
+    /* get the size of the file to be sent */
+    fstat(fd, &stat_buf);
 
-		std::cout << "send: ";
-		std::cin >> input;
-		if (send(sockfd, input.c_str(), input.size(), 0) == -1) {
-			perror("send");
-			return 4;
-		}
+    /* copy file using sendfile */
+    int rc = sendfile (sockfd, fd, NULL, stat_buf.st_size);
+    std::cout << "Sending file: " << file_name << std::endl;
+    std::cout << "Bytes: " << rc << std::endl;
 
+    if (rc == -1) {
+		fprintf(stderr, "error from sendfile: %s\n", strerror(errno));
+		exit(1);
+    }
 
-		if (recv(sockfd, buf, 20, 0) == -1) {
-			perror("recv");
-			return 5;
-		}
-
-		ss << buf << std::endl;
-		std::cout << "echo: ";
-		std::cout << buf << std::endl;
-
-		if (ss.str() == "close\n")
-			break;
-
-		ss.str("");
-	}
+    if (rc != stat_buf.st_size) {
+		fprintf(stderr, "incomplete transfer from sendfile: %d of %d bytes\n", rc, (int)stat_buf.st_size);
+		exit(1);
+    }
 
 	close(sockfd);
 
 	return 0;
-
 }
