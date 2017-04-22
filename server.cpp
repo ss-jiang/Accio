@@ -1,5 +1,6 @@
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/select.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <string.h>
@@ -30,7 +31,7 @@ void signal_handler(int signum)
 	//exit(0);
 }
 
-void handle_thread(struct sockaddr_in clientAddr, int clientSockfd, int connection_number, std::string file_dir)
+void handle_thread(struct sockaddr_in clientAddr, int clientSockfd, int connection_number, std::string file_dir, int sockfd)
 {
 	char ipstr[INET_ADDRSTRLEN] = {'\0'};
 
@@ -41,24 +42,49 @@ void handle_thread(struct sockaddr_in clientAddr, int clientSockfd, int connecti
 	std::string save_name = file_dir + "/" + std::to_string(connection_number) + ".file";
 
 	std::ofstream new_file;
-	new_file.open(save_name, std::ios::out);
-	char receive_buf[1500];
+	new_file.open(save_name, std::ios::out | std::ios::binary);
+	char receive_buf[1024] = {0};
 	int file_size = 0;
 	int rc = 0;
+	std::string outputFileString = "";
 
-    /* get the file name from the client */
-    while( (rc = recv(clientSockfd, receive_buf, sizeof(receive_buf), 0)) > 0)
-    {
-	    if (rc == -1) {
-			fprintf(stderr, "recv failed: %s\n", strerror(errno));
-			exit(1);
-	    }
-	    new_file.write(receive_buf, rc);
-	    file_size += rc;
+	int n = sockfd+1;
+	fd_set readfds;
+	struct timeval tv;
+	FD_SET(sockfd, &readfds);
+	tv.tv_sec = 10;
+	int rv = select(n, &readfds, NULL, NULL, &tv);
+
+	if (rv == -1) 
+	{
+		std::cerr << "ERROR: Select() failure" << std::endl;
+	    exit(1);
+	} 
+	else if (rv == 0) 
+	{
+		std::string err = "ERROR";
+		new_file.write(&err[0], 5);
+	    printf("Timeout occurred!  No data after 10 seconds.\n");
+	} 
+	else 
+	{
+		/* get the file name from the client */
+	    while( (rc = recv(clientSockfd, receive_buf, sizeof(receive_buf), 0)) > 0)
+	    {
+		    if (rc == -1) {
+				fprintf(stderr, "recv failed: %s\n", strerror(errno));
+				exit(1);
+		    }
+
+		    new_file.write(receive_buf, rc);
+		    file_size += rc;
+		    memset(receive_buf, 0, sizeof(receive_buf));
+		}
+
+		std::cout << "Saved file as " << save_name << " : " << file_size << " bytes\n";
+		file_size = 0;
+		new_file.close();
 	}
-	std::cout << "Received file of " << file_size << " bytes\n";
-	file_size = 0;
-	new_file.close();
 }
 
 
@@ -138,7 +164,7 @@ int main(int argc, char* argv[])
 	std::vector<std::thread> t;
 
 	while ((clientSockfd = accept(sockfd, (struct sockaddr *)&clientAddr, &clientAddrSize)) && !SIG_HANDLER_CALLED) 
-	{	
+	{
 
 		if (clientSockfd == -1) {
 			std::cerr << "ERROR: Failed to get accept connection" << std::endl;
@@ -146,9 +172,8 @@ int main(int argc, char* argv[])
 		}
 
 		// Create a thread for each new accepted fd
-		t.push_back(std::thread(handle_thread, clientAddr, clientSockfd, connection_number, file_dir));
+		t.push_back(std::thread(handle_thread, clientAddr, clientSockfd, connection_number, file_dir, sockfd));
 		connection_number++;
-
 	}
 	if (SIG_HANDLER_CALLED) 
 	{
