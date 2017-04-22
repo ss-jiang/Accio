@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <netdb.h>
 #include <fcntl.h> 
+#include <vector>
 
 #include <string>
 #include <thread>
@@ -19,11 +20,45 @@
 // server is called with the following parameters
 // server <PORT> <FILE-DIR>
 
+bool SIG_HANDLER_CALLED = 0;
+
 void signal_handler(int signum)
 {
-	std::cout << "signal handler called" << std::endl;
+	SIG_HANDLER_CALLED = 1;
+	std::cout << "Signal handler called" << std::endl;
 	// Exit zero when SIGQUIT or SIGTERM received
-	exit(0);
+	//exit(0);
+}
+
+void handle_thread(struct sockaddr_in clientAddr, int clientSockfd, int connection_number, std::string file_dir)
+{
+	char ipstr[INET_ADDRSTRLEN] = {'\0'};
+
+	inet_ntop(clientAddr.sin_family, &clientAddr.sin_addr, ipstr, sizeof(ipstr));
+	std::cout << "Accept a connection from: " << ipstr << ":" << ntohs(clientAddr.sin_port) << std::endl;
+
+	connection_number++;
+	std::string save_name = file_dir + "/" + std::to_string(connection_number) + ".file";
+
+	std::ofstream new_file;
+	new_file.open(save_name, std::ios::out);
+	char receive_buf[1500];
+	int file_size = 0;
+	int rc = 0;
+
+    /* get the file name from the client */
+    while( (rc = recv(clientSockfd, receive_buf, sizeof(receive_buf), 0)) > 0)
+    {
+	    if (rc == -1) {
+			fprintf(stderr, "recv failed: %s\n", strerror(errno));
+			exit(1);
+	    }
+	    new_file.write(receive_buf, rc);
+	    file_size += rc;
+	}
+	std::cout << "Received file of " << file_size << " bytes\n";
+	file_size = 0;
+	new_file.close();
 }
 
 
@@ -34,15 +69,19 @@ int main(int argc, char* argv[])
       	exit(-1);
    	}
 
-   	signal(SIGQUIT, signal_handler);
-   	signal(SIGTERM, signal_handler);
-   	signal(SIGINT, signal_handler);
+   	// Handle signals
+   	struct sigaction act;
+   	act.sa_handler = &signal_handler;
+   	sigaction(SIGQUIT, &act, NULL);
+   	sigaction(SIGTERM, &act, NULL);
+   	// FOR TESTING PURPOSES: Ctrl-C
+   	sigaction(SIGINT, &act, NULL);
+
 	
    	int port_num = atoi(argv[1]);
    	std::string file_dir = argv[2];
    	struct addrinfo hints, *res;
     int status;
-    char ipstr[INET_ADDRSTRLEN] = {'\0'};
 
    	// Check that the port number is in range
    	if (port_num < 1024 || port_num > 65535) {
@@ -92,39 +131,31 @@ int main(int argc, char* argv[])
 	struct sockaddr_in clientAddr;
 	socklen_t clientAddrSize = sizeof(clientAddr);
 	int clientSockfd;
+	int connection_number = 0;
 
-	while ((clientSockfd = accept(sockfd, (struct sockaddr *)&clientAddr, &clientAddrSize))) 
-	{
+	// multithreading headers
+	// use vector to keep track of threads
+	std::vector<std::thread> t;
+
+	while ((clientSockfd = accept(sockfd, (struct sockaddr *)&clientAddr, &clientAddrSize)) && !SIG_HANDLER_CALLED) 
+	{	
 
 		if (clientSockfd == -1) {
 			std::cerr << "ERROR: Failed to get accept connection" << std::endl;
 			exit(1);
 		}
 
-		inet_ntop(clientAddr.sin_family, &clientAddr.sin_addr, ipstr, sizeof(ipstr));
-		std::cout << "Accept a connection from: " << ipstr << ":" << ntohs(clientAddr.sin_port) << std::endl;
+		// Create a thread for each new accepted fd
+		t.push_back(std::thread(handle_thread, clientAddr, clientSockfd, connection_number, file_dir));
+		connection_number++;
 
-		std::ofstream new_file;
-		new_file.open("1.txt", std::ios::out);
-		char receive_buf[1500];
-		int file_size = 0;
-		int rc = 0;
-
-	    /* get the file name from the client */
-	    while( (rc = recv(clientSockfd, receive_buf, sizeof(receive_buf), 0)) > 0)
-	    {
-		    if (rc == -1) {
-				fprintf(stderr, "recv failed: %s\n", strerror(errno));
-				exit(1);
-		    }
-		    new_file.write(receive_buf, rc);
-		    file_size += rc;
+	}
+	if (SIG_HANDLER_CALLED) 
+	{
+		for (unsigned i = 0; i < t.size(); i++)
+		{
+			t[i].join();
 		}
-		std::cout << "Received file of " << file_size << " bytes\n";
-		file_size = 0;
-		new_file.close();
-
-
 	}
 
    	exit(0);
