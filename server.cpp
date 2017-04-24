@@ -22,38 +22,38 @@
 // server <PORT> <FILE-DIR>
 
 bool SIG_HANDLER_CALLED = 0;
+// multithreading headers
+// use vector to keep track of threads
+std::vector<std::thread> t;
 
 void signal_handler(int signum)
 {
 	SIG_HANDLER_CALLED = 1;
 	std::cout << "Signal handler called" << std::endl;
-	// Exit zero when SIGQUIT or SIGTERM received
-	//exit(0);
+	exit(0);
 }
 
-void handle_thread(struct sockaddr_in clientAddr, int clientSockfd, int connection_number, std::string file_dir, int sockfd)
+void handle_thread(struct sockaddr_in clientAddr, int clientSockfd, int connection_number, std::string file_dir)
 {
 	char ipstr[INET_ADDRSTRLEN] = {'\0'};
 
 	inet_ntop(clientAddr.sin_family, &clientAddr.sin_addr, ipstr, sizeof(ipstr));
 	std::cout << "Accept a connection from: " << ipstr << ":" << ntohs(clientAddr.sin_port) << std::endl;
 
-	connection_number++;
 	std::string save_name = file_dir + "/" + std::to_string(connection_number) + ".file";
 
-	std::ofstream new_file;
-	new_file.open(save_name, std::ios::out | std::ios::binary);
-	char receive_buf[1024] = {0};
-	int file_size = 0;
-	int rc = 0;
-	std::string outputFileString = "";
+	// Set to blocking mode again... 
+	long arg = fcntl(clientSockfd, F_GETFL, NULL); 
+	arg &= (~O_NONBLOCK); 
+	fcntl(clientSockfd, F_SETFL, arg); 
 
-	int n = sockfd+1;
+	// timeout variables
 	fd_set readfds;
 	struct timeval tv;
-	FD_SET(sockfd, &readfds);
+	FD_ZERO(&readfds);
+	FD_SET(clientSockfd, &readfds);
 	tv.tv_sec = 10;
-	int rv = select(n, &readfds, NULL, NULL, &tv);
+	int rv = select(clientSockfd+1, &readfds, NULL, NULL, &tv);
 
 	if (rv == -1) 
 	{
@@ -62,12 +62,23 @@ void handle_thread(struct sockaddr_in clientAddr, int clientSockfd, int connecti
 	} 
 	else if (rv == 0) 
 	{
-		std::string err = "ERROR";
-		new_file.write(&err[0], 5);
+		// variables used to open and write to a file
+		std::ofstream new_file;
+		new_file.open(save_name, std::ios::out | std::ios::binary);
+
+		//std::string err = "ERROR";
+		new_file.write("ERROR", 5);
 	    printf("Timeout occurred!  No data after 10 seconds.\n");
 	} 
 	else 
 	{
+		// variables used to open and write to a file
+		std::ofstream new_file;
+		new_file.open(save_name, std::ios::out | std::ios::binary);
+		char receive_buf[1024] = {0};
+		int file_size = 0;
+		int rc = 0;
+
 		/* get the file name from the client */
 	    while( (rc = recv(clientSockfd, receive_buf, sizeof(receive_buf), 0)) > 0)
 	    {
@@ -85,6 +96,8 @@ void handle_thread(struct sockaddr_in clientAddr, int clientSockfd, int connecti
 		file_size = 0;
 		new_file.close();
 	}
+
+	close(clientSockfd);
 }
 
 
@@ -159,9 +172,9 @@ int main(int argc, char* argv[])
 	int clientSockfd;
 	int connection_number = 0;
 
-	// multithreading headers
-	// use vector to keep track of threads
-	std::vector<std::thread> t;
+	// std::cout << "Sleep\n";
+	// sleep(20);
+	// std::cout << "End Sleep\n";
 
 	while ((clientSockfd = accept(sockfd, (struct sockaddr *)&clientAddr, &clientAddrSize)) && !SIG_HANDLER_CALLED) 
 	{
@@ -172,15 +185,8 @@ int main(int argc, char* argv[])
 		}
 
 		// Create a thread for each new accepted fd
-		t.push_back(std::thread(handle_thread, clientAddr, clientSockfd, connection_number, file_dir, sockfd));
 		connection_number++;
-	}
-	if (SIG_HANDLER_CALLED) 
-	{
-		for (unsigned i = 0; i < t.size(); i++)
-		{
-			t[i].join();
-		}
+		std::thread(handle_thread, clientAddr, clientSockfd, connection_number, file_dir).detach();
 	}
 
    	exit(0);
