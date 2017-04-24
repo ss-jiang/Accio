@@ -9,22 +9,17 @@
 #include <unistd.h>
 #include <netdb.h>
 #include <fcntl.h> 
-#include <vector>
+#include <signal.h>
+#include <fstream>
 
 #include <string>
 #include <thread>
 #include <iostream>
-#include <signal.h>
-#include <sstream>
-#include <fstream>
 
 // server is called with the following parameters
 // server <PORT> <FILE-DIR>
 
 bool SIG_HANDLER_CALLED = 0;
-// multithreading headers
-// use vector to keep track of threads
-std::vector<std::thread> t;
 
 void signal_handler(int signum)
 {
@@ -68,7 +63,7 @@ void handle_thread(struct sockaddr_in clientAddr, int clientSockfd, int connecti
 
 		//std::string err = "ERROR";
 		new_file.write("ERROR", 5);
-	    printf("Timeout occurred!  No data after 10 seconds.\n");
+	    std::cerr << "Timeout occurred:  No data after 10 seconds\n";
 	} 
 	else 
 	{
@@ -83,7 +78,7 @@ void handle_thread(struct sockaddr_in clientAddr, int clientSockfd, int connecti
 	    while( (rc = recv(clientSockfd, receive_buf, sizeof(receive_buf), 0)) > 0)
 	    {
 		    if (rc == -1) {
-				fprintf(stderr, "recv failed: %s\n", strerror(errno));
+		    	std::cerr << "ERROR: recv() failed\n";
 				exit(1);
 		    }
 
@@ -114,7 +109,7 @@ int main(int argc, char* argv[])
    	sigaction(SIGQUIT, &act, NULL);
    	sigaction(SIGTERM, &act, NULL);
    	// FOR TESTING PURPOSES: Ctrl-C
-   	sigaction(SIGINT, &act, NULL);
+   	// sigaction(SIGINT, &act, NULL);
 
 	
    	int port_num = atoi(argv[1]);
@@ -172,10 +167,6 @@ int main(int argc, char* argv[])
 	int clientSockfd;
 	int connection_number = 0;
 
-	// std::cout << "Sleep\n";
-	// sleep(20);
-	// std::cout << "End Sleep\n";
-
 	while ((clientSockfd = accept(sockfd, (struct sockaddr *)&clientAddr, &clientAddrSize)) && !SIG_HANDLER_CALLED) 
 	{
 
@@ -188,6 +179,9 @@ int main(int argc, char* argv[])
 		connection_number++;
 		std::thread(handle_thread, clientAddr, clientSockfd, connection_number, file_dir).detach();
 	}
+
+	close(sockfd);
+	close(clientSockfd);
 
    	exit(0);
 }

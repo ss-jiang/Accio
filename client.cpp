@@ -11,13 +11,12 @@
 
 #include <stdlib.h>
 #include <fcntl.h>
+#include <signal.h>
+#include <fstream>
 
 #include <string>
 #include <thread>
 #include <iostream>
-#include <signal.h>
-#include <sstream>
-#include <fstream>
 
 #define MAX_PATH_LENGTH        4096
 
@@ -33,7 +32,7 @@ int main(int argc, char* argv[])
   std::string file_name = argv[3];
   
   // for timeout
-  fd_set myset;
+  fd_set fds;
   int valopt;
   struct timeval tv;
   socklen_t lon;
@@ -76,11 +75,10 @@ int main(int argc, char* argv[])
       while(1) 
       { 
         tv.tv_sec = 10; 
-        tv.tv_usec = 0; 
-        FD_ZERO(&myset); 
-        FD_SET(sockfd, &myset); 
+        FD_ZERO(&fds); 
+        FD_SET(sockfd, &fds); 
 
-        cv = select(sockfd+1, NULL, &myset, NULL, &tv); 
+        cv = select(sockfd+1, NULL, &fds, NULL, &tv); 
         if (cv < 0 && errno != EINTR) { 
           std::cerr << "ERROR: Error connecting\n";
           exit(1);
@@ -92,15 +90,11 @@ int main(int argc, char* argv[])
             std::cerr << "ERROR: Error in getsockopt()\n";
             exit(1); 
           } 
-          if (valopt) { 
-            std::cerr << "ERROR: Error in delayed connection()\n"; 
-            exit(1); 
-          } 
           break; 
         } 
         else 
         { 
-          std::cerr << "ERROR: Timeout in select() - Cancelling!\n"; 
+          std::cerr << "ERROR: Timeout occurred while connecting\n"; 
           exit(1); 
         } 
       } 
@@ -126,73 +120,25 @@ int main(int argc, char* argv[])
   inet_ntop(clientAddr.sin_family, &clientAddr.sin_addr, ipstr, sizeof(ipstr));
   std::cout << "Set up a connection from: " << ipstr << ":" << ntohs(clientAddr.sin_port) << std::endl;
 
-  // std::cout << "Sleeping\n";
-  // sleep(11);
-  // std::cout << "End sleep\n";
-
-  // FROM: 
-  // http://tldp.org/LDP/LGNET/91/misc/tranter/server.c.txt
-  /* open the file to be sent */
-  // int fd = open(file_name.c_str(), std::ios::in | std::ios::binary);
-  // if (fd == -1) {
-    // fprintf(stderr, "unable to open '%s': %s\n", &file_name[0], strerror(errno));
-    // exit(1);
-  // }
-
-  // /* get the size of the file to be sent */
-  // fstat(fd, &stat_buf);
-
-  // sleep(10);
-
-  // // timeout variables
-  // fd_set writefds;
-  // FD_ZERO(&writefds);
-  // FD_SET(sockfd, &writefds);
-  // int rv = select(sockfd+1, NULL, &writefds, NULL, &tv);
-
-  // if (rv == -1) 
-  // {
-  //   std::cerr << "ERROR: Select() failure" << std::endl;
-  //     exit(1);
-  // } 
-  // else if (rv == 0) 
-  // {
-  //   printf("Timeout occurred!  No data after 10 seconds.\n");
-  // } 
-  // else 
-  // {
-  //   /* copy file using sendfile */
-  //   int rc = sendfile(sockfd, fd, NULL, stat_buf.st_size);
-  //   std::cout << "Sending file: " << file_name << std::endl;
-  //   std::cout << "Bytes: " << rc << std::endl;
-
-  //   if (rc == -1) {
-  //     fprintf(stderr, "error from sendfile: %s\n", strerror(errno));
-  //     exit(1);
-  //   }
-
-  //   if (rc != stat_buf.st_size) {
-  //     fprintf(stderr, "incomplete transfer from sendfile: %d of %d bytes\n", rc, (int)stat_buf.st_size);
-  //     exit(1);
-  //   }
-  // }
-
+  // FROM: http://tldp.org/LDP/LGNET/91/misc/tranter/server.c.txt
   std::ifstream open_file (file_name.c_str(), std::ios::in | std::ios::binary );
-  char in_buffer[25000];
+  char in_buffer[1500]; // TCP packets are typically 1500 bytes max
   int wc = 0;
 
   while(!open_file.eof())
   {
-    open_file.read(in_buffer, 25000);
-    wc += open_file.gcount();
-    if(send(sockfd, in_buffer, open_file.gcount(), 0) == -1)
+    open_file.read(in_buffer, 1500);
+
+    int sent = send(sockfd, in_buffer, open_file.gcount(), 0);
+    if (sent > 0)
+    {
+      wc += sent;
+    }
+    if (sent == -1)
     {
       std::cerr << "ERROR: Could not send file\n";
       exit(1); 
     }
-    // test delay
-    // std::cout << "timeout" << std::endl;
-    // sleep(2);
   }
   std::cout << "Sent file: " << file_name << std::endl;
   std::cout << "Bytes: " << wc << std::endl;
@@ -200,5 +146,5 @@ int main(int argc, char* argv[])
   open_file.close();
   close(sockfd);
 
-  return 0;
+  exit(0);
 }
