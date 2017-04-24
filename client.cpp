@@ -11,12 +11,13 @@
 
 #include <stdlib.h>
 #include <fcntl.h>
-#include <signal.h>
-#include <fstream>
 
 #include <string>
 #include <thread>
 #include <iostream>
+#include <signal.h>
+#include <sstream>
+#include <fstream>
 
 #define MAX_PATH_LENGTH        4096
 
@@ -32,7 +33,7 @@ int main(int argc, char* argv[])
   std::string file_name = argv[3];
   
   // for timeout
-  fd_set fds;
+  fd_set myset;
   int valopt;
   struct timeval tv;
   socklen_t lon;
@@ -68,17 +69,18 @@ int main(int argc, char* argv[])
     exit(1);
   }
 
-  // TIMEOUT LOGIC FROM http://developerweb.net/viewtopic.php?id=3196
+  // TIMEOUT FROM http://developerweb.net/viewtopic.php?id=3196
   int cv = connect(sockfd, res->ai_addr, res->ai_addrlen);
   if (cv < 0) { 
     if (errno == EINPROGRESS) { 
       while(1) 
       { 
         tv.tv_sec = 10; 
-        FD_ZERO(&fds); 
-        FD_SET(sockfd, &fds); 
+        tv.tv_usec = 0; 
+        FD_ZERO(&myset); 
+        FD_SET(sockfd, &myset); 
 
-        cv = select(sockfd+1, NULL, &fds, NULL, &tv); 
+        cv = select(sockfd+1, NULL, &myset, NULL, &tv); 
         if (cv < 0 && errno != EINTR) { 
           std::cerr << "ERROR: Error connecting\n";
           exit(1);
@@ -90,11 +92,15 @@ int main(int argc, char* argv[])
             std::cerr << "ERROR: Error in getsockopt()\n";
             exit(1); 
           } 
+          if (valopt) { 
+            std::cerr << "ERROR: Error in delayed connection()\n"; 
+            exit(1); 
+          } 
           break; 
         } 
         else 
         { 
-          std::cerr << "ERROR: Timeout occurred while connecting\n"; 
+          std::cerr << "ERROR: Timeout while connecting\n"; 
           exit(1); 
         } 
       } 
@@ -120,15 +126,13 @@ int main(int argc, char* argv[])
   inet_ntop(clientAddr.sin_family, &clientAddr.sin_addr, ipstr, sizeof(ipstr));
   std::cout << "Set up a connection from: " << ipstr << ":" << ntohs(clientAddr.sin_port) << std::endl;
 
-  // FROM: http://tldp.org/LDP/LGNET/91/misc/tranter/server.c.txt
   std::ifstream open_file (file_name.c_str(), std::ios::in | std::ios::binary );
-  char in_buffer[1500]; // TCP packets are typically 1500 bytes max
+  char in_buffer[1500];
   int wc = 0;
 
   while(!open_file.eof())
   {
     open_file.read(in_buffer, 1500);
-
     int sent = send(sockfd, in_buffer, open_file.gcount(), 0);
     if (sent > 0)
     {
@@ -146,5 +150,5 @@ int main(int argc, char* argv[])
   open_file.close();
   close(sockfd);
 
-  exit(0);
+  return 0;
 }
